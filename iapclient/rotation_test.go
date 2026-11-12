@@ -2,7 +2,7 @@ package iapclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -44,7 +44,7 @@ func (f *rotatingIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	refuse := func(body map[string]string) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(body)
+		_ = json.MarshalWrite(w, body)
 	}
 	tok := r.PostFormValue("refresh_token")
 	switch {
@@ -85,11 +85,11 @@ func (f *rotatingIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if f.forbidden[host] {
 		w.WriteHeader(http.StatusForbidden)
 		body["error"], body["principal"], body["host"] = "forbidden", testAccount+":s", host
-		_ = json.NewEncoder(w).Encode(body)
+		_ = json.MarshalWrite(w, body)
 		return
 	}
 	body["access_token"], body["token_type"], body["expires_in"] = "at-"+host, "Bearer", 3600
-	_ = json.NewEncoder(w).Encode(body)
+	_ = json.MarshalWrite(w, body)
 }
 
 func (f *rotatingIssuer) state() (current string, revoked bool, exp time.Time) {

@@ -18,7 +18,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ import (
 	"github.com/hashicorp/yamux"
 
 	"github.com/R167/iap/iapclient"
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // Tokens mints access tokens for one exact host; *iapclient.TokenSource is
@@ -469,7 +471,8 @@ func refusalFrom(resp *http.Response, host string) error {
 		Principal string `json:"principal"`
 	}
 	if resp.Body != nil {
-		_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&body)
+		// One value, like v1's Decoder.Decode: trailing bytes are not an error.
+		_ = json.UnmarshalDecode(jsontext.NewDecoder(io.LimitReader(resp.Body, 4096), jsoncompat.Read), &body)
 	}
 	switch body.Error {
 	case CodeInvalidName, CodeReservedName, CodeNameTaken, CodeQuota, CodeBadRequest, CodeNotAgent, CodeUnauthenticated,
@@ -487,7 +490,7 @@ func readControl(br *bufio.Reader, m *Control) error {
 	if err != nil {
 		return err
 	}
-	return json.Unmarshal(line, m)
+	return json.Unmarshal(line, m, jsoncompat.Read)
 }
 
 func acceptTimeout(ys *yamux.Session, d time.Duration) (net.Conn, error) {

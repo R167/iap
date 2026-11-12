@@ -21,7 +21,7 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +43,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/R167/iap/iapclient"
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 const defaultIssuer = "https://access.iap.r167.dev"
@@ -668,7 +669,7 @@ func tailscaleExchange(ctx context.Context, endpoint, clientID string, jwt iapcl
 		Description string `json:"error_description"`
 		Message     string `json:"message"`
 	}
-	jerr := json.Unmarshal(body, &out)
+	jerr := json.Unmarshal(body, &out, jsoncompat.Read) // as lenient as v1 was
 	if resp.StatusCode != http.StatusOK || jerr != nil || out.AccessToken == "" {
 		return iapclient.Secret{}, fmt.Errorf("tailscale token exchange: HTTP %d %s %s %s", resp.StatusCode, out.Error, out.Description, out.Message)
 	}

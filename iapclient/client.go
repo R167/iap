@@ -2,7 +2,7 @@ package iapclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +12,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // Config configures a Client.
@@ -274,7 +276,8 @@ func (c *Client) tokenRequest(ctx context.Context, form url.Values) (tokenRespon
 		return tr, &transientError{err}
 	}
 	transient := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
-	if err := json.Unmarshal(body, &tr); err != nil {
+	// jsoncompat.Read: the issuer is a v1 encoder; decode what v1 decoded.
+	if err := json.Unmarshal(body, &tr, jsoncompat.Read); err != nil {
 		err := fmt.Errorf("token endpoint: HTTP %d, not JSON (is %s reachable?)", resp.StatusCode, c.cfg.Issuer)
 		if transient {
 			return tokenResponse{}, &transientError{err}

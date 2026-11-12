@@ -3,7 +3,7 @@ package iapclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"net/http"
 	"slices"
@@ -122,7 +122,7 @@ func (f *flakyIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if failing {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(f.status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "temporarily_unavailable"})
+		_ = json.MarshalWrite(w, map[string]string{"error": "temporarily_unavailable"})
 		return
 	}
 	f.pkceIssuer.ServeHTTP(w, r)

@@ -3,7 +3,7 @@ package iapclient
 import (
 	"bytes"
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
@@ -109,10 +109,10 @@ func (f *fakeIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "authorization_code":
 		if r.PostFormValue("code") != "the-code" || r.PostFormValue("code_verifier") == "" {
 			w.WriteHeader(400)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			_ = json.MarshalWrite(w, map[string]string{"error": "invalid_grant"})
 			return
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"refresh_token": testRefresh, "principal": testAccount + ":*",
 			"expires_at": "2030-01-02T03:04:05Z", "external_audience_suffixes": f.suffixes,
 		})
@@ -120,7 +120,7 @@ func (f *fakeIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		host, session := r.PostFormValue("audience"), r.PostFormValue("session")
 		if f.invalid || r.PostFormValue("refresh_token") != testRefresh {
 			w.WriteHeader(400)
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+			_ = json.MarshalWrite(w, map[string]string{"error": "invalid_grant"})
 			return
 		}
 		p := testAccount + ":" + session
@@ -130,14 +130,14 @@ func (f *fakeIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if strings.Contains(host, "/") {
 				key = "audience" // a federated audience entry, as iap-authz names it
 			}
-			_ = json.NewEncoder(w).Encode(map[string]string{"error": "forbidden", "principal": p, key: host})
+			_ = json.MarshalWrite(w, map[string]string{"error": "forbidden", "principal": p, key: host})
 			return
 		}
 		if f.mints == nil {
 			f.mints = map[string]int{}
 		}
 		f.mints[host]++
-		_ = json.NewEncoder(w).Encode(map[string]any{
+		_ = json.MarshalWrite(w, map[string]any{
 			"access_token": fmt.Sprintf("at-%s-%d", host, f.mints[host]), "token_type": "Bearer",
 			"expires_in": f.expiresIn, "principal": p,
 		})

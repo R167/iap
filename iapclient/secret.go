@@ -1,6 +1,7 @@
 package iapclient
 
 import (
+	"encoding/json/jsontext"
 	"errors"
 	"fmt"
 	"io"
@@ -12,7 +13,9 @@ const redacted = "<redacted>"
 
 // Secret holds a credential (an access token or the refresh credential). It
 // never prints: String, GoString, every fmt verb and slog give "<redacted>",
-// and JSON or text marshalling fails. Reveal is the only way to the value.
+// and JSON, text or binary marshalling fails, under encoding/json and
+// encoding/json/v2 alike (each marshalling interface either version, or an
+// encoding.*Appender user, may try first refuses). Reveal is the only way to the value.
 type Secret struct{ v string }
 
 // NewSecret wraps a credential.
@@ -32,6 +35,14 @@ func (Secret) LogValue() slog.Value           { return slog.StringValue(redacted
 func (Secret) MarshalJSON() ([]byte, error)   { return nil, errMarshal }
 func (Secret) MarshalText() ([]byte, error)   { return nil, errMarshal }
 func (Secret) MarshalBinary() ([]byte, error) { return nil, errMarshal }
+
+// MarshalJSONTo refuses: encoding/json/v2 tries it before MarshalJSON.
+func (Secret) MarshalJSONTo(*jsontext.Encoder) error { return errMarshal }
+
+// AppendText and AppendBinary refuse: encoding/json/v2 (as a map key or
+// value) and other encoders try the Appender forms before the Marshal ones.
+func (Secret) AppendText([]byte) ([]byte, error)   { return nil, errMarshal }
+func (Secret) AppendBinary([]byte) ([]byte, error) { return nil, errMarshal }
 
 var errMarshal = errors.New("iapclient: refusing to marshal a credential")
 

@@ -9,6 +9,7 @@ Client side of an iap-authz identity-aware proxy: a CLI and two Go packages that
 | `iapclient/` | The library: issuer config, credential stores (Keychain via `security`, Secret Service via `secret-tool`, file), loopback and headless login, token cache, `Transport`, refresh rotation under a file lock | **Standard library only.** No third-party import, ever; consumers rely on it. Exported API is public: additive changes only. |
 | `expose/` | Tunnel client (`Run`) and the wire protocol (`proto.go`) | Imported by the private iap-tunnel server; see "Wire protocol". Depends on `github.com/coder/websocket` and `github.com/hashicorp/yamux`. |
 | `internal/cli/` | The `iap` command (cobra): `main.go` (root, login, curl, status, logout), `curlargs.go` (curl option allowlist), `expose.go` | `Main() int` is the whole program; it returns the exit status. |
+| `internal/jsoncompat/` | The `encoding/json/v2` options every decode and encode uses (`Read`, `Write`, `File`) | See "JSON". Standard library only (`iapclient` imports it). |
 | `cmd/iap/main.go`, `main.go` | Identical `package main` shims: `os.Exit(cli.Main())` | Both exist so `go install github.com/R167/iap@latest` and `.../cmd/iap@latest` each produce `iap`. Keep them identical and logic-free. |
 
 macOS and Linux only (`internal/cli` uses process groups, `TIOCSPGRP`, `flock`). Windows is unsupported: there is no keyring backend and the file store cannot check permissions.
@@ -31,6 +32,19 @@ The iap-tunnel server imports `github.com/R167/iap/expose` for these definitions
 - Never renumber or reuse a close code, `Refusal.Code` string, query key or header name. Retire one by leaving it defined and unused.
 - A breaking change needs a new endpoint path (`/v2/connect`), with the server serving both until old clients are gone.
 - Land a protocol change here first, tag a release, then bump the server to that version.
+- **The peer may encode and decode with `encoding/json` (v1) or `encoding/json/v2`**, and either side may move between them independently. Every message must read the same under both; `expose/proto_test.go` pins `MarshalLine` to v1's bytes and `readControl`/`refusalFrom` to v1's leniency. See "JSON".
+
+## JSON
+
+All code uses `encoding/json/v2` (and `encoding/json/jsontext`); no `encoding/json` import outside tests, no third-party JSON module. Everything this module reads may have been written by v1 (the issuer, the tunnel server, `config.json` and `credentials.json` from older releases), and everything it writes may be read by v1. So:
+
+- **Decode with `jsoncompat.Read`** (`json.Unmarshal(b, &v, jsoncompat.Read)`, or `jsontext.NewDecoder(r, jsoncompat.Read)` + `json.UnmarshalDecode` for one value from a stream, as v1's `Decoder.Decode` read). It restores v1's leniency: case-insensitive member names, duplicate names (last wins), invalid UTF-8 (U+FFFD). Unknown members are ignored by both versions; `null` decodes to the zero value.
+- **Encode wire messages with `jsoncompat.Write`, files with `jsoncompat.File`**: nil slices and maps as `null`, sorted map keys, v1's HTML/JS escaping, and for files v1's two-space `MarshalIndent` layout, so the bytes match what a v1 build wrote (`TestStateFileV1Bytes`, `TestFileStoreV1Bytes`).
+- **Tag `omitzero`, not `omitempty`, on a number or bool field that should be dropped at zero.** v2's `omitempty` only drops what encodes as `null`, `""`, `[]` or `{}`, so it writes `0` and `false`. `omitempty` stays right for strings, slices and maps. v1 honours `omitzero` too.
+- `time.Duration` has no v2 default (marshalling one fails); give it an explicit format or keep it out of JSON types.
+- Custom decoding: implement `UnmarshalJSONFrom` and decode inner values with `json.UnmarshalDecode(dec, …)` so the caller's options apply (`State`). An exported type that had `UnmarshalJSON` keeps it (public API), delegating to v2 with `jsoncompat.Read`. To decode a type's plain fields from inside its own method, use a method-less local type in a named field tagged `json:",embed"` (v2 ignores an unknown option such as `inline` silently).
+- `Secret` refuses every marshalling interface either version or an `encoding.*Appender` user tries first (`MarshalJSONTo`, `MarshalJSON`, `AppendText`, `MarshalText`, `AppendBinary`, `MarshalBinary`); `TestSecretRefusesJSONV2` covers v1 and v2, nested, as map keys and values. Keep every one when adding another.
+- Tests of v1 compatibility use literal v1 output or import `encoding/json` as `jsonv1`; that is the only place v1 appears.
 
 ## Develop and test
 
@@ -45,7 +59,7 @@ go run -ldflags "-X github.com/R167/iap/internal/cli.Version=v0.0.0-test" ./cmd/
 - Tests use example names only (`alice@example.com`, `app.iap.r167.dev` for the default issuer's domain, `*.example.com`/`.net`/`.test`). This repository is public: no real email addresses, hostnames, IPs or tailnet names in code, tests or docs.
 - Tests never touch the real keyring or config: `isolate(t)` (`internal/cli/main_test.go`) points `HOME`, `XDG_CONFIG_HOME` and `XDG_STATE_HOME` at a temp dir and resets the root flags; tests save state with `Store: iapclient.StoreFile` (or a fake `Store`) and pin `autoStoreName` when they exercise the auto default. Keep it that way for new tests.
 - PTY tests (`pty_*_test.go`) skip when no pty is available. `TestCurlCommandRealCurl` skips without `curl`.
-- The `expose` package has no tests here: its end-to-end tests need the tunnel server and run in the server's repository. Unit-testable additions to `expose` should get tests here.
+- The `expose` package's end-to-end tests need the tunnel server and run in the server's repository; here it has unit tests only (`proto_test.go`, the wire's JSON compatibility). Unit-testable additions to `expose` should get tests here.
 - CI (`.github/workflows/ci.yml`) runs gofmt, vet and race tests on ubuntu-latest and macos-latest.
 
 ## Release

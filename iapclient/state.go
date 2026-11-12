@@ -1,12 +1,15 @@
 package iapclient
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // State is the non-secret record of one program's registration, kept in
@@ -23,25 +26,33 @@ type State struct {
 	// StoreFallback: Store was used only because no OS keyring worked at
 	// login, not chosen. Commands still read the credential from it; the next
 	// login tries the keyring again.
-	StoreFallback bool `json:"store_fallback,omitempty"`
+	// omitzero, not omitempty: v2's omitempty would still write false.
+	StoreFallback bool `json:"store_fallback,omitzero"`
 }
 
-// UnmarshalJSON also accepts the issuer's wire name for the suffixes
-// (external_audience_suffixes), as another writer may store it.
-func (s *State) UnmarshalJSON(b []byte) error {
-	type plain State
+// UnmarshalJSONFrom also accepts the issuer's wire name for the suffixes
+// (external_audience_suffixes), as another writer may store it. The whole
+// State is replaced, not merged into.
+func (s *State) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
+	type plain State // State without its methods, so json decodes it natively
 	var v struct {
-		plain
+		P    plain    `json:",embed"`
 		Wire []string `json:"external_audience_suffixes"`
 	}
-	if err := json.Unmarshal(b, &v); err != nil {
+	if err := json.UnmarshalDecode(dec, &v); err != nil {
 		return err
 	}
-	*s = State(v.plain)
+	*s = State(v.P)
 	if len(s.AudienceSuffixes) == 0 {
 		s.AudienceSuffixes = v.Wire
 	}
 	return nil
+}
+
+// UnmarshalJSON is UnmarshalJSONFrom for callers on encoding/json (v1),
+// with v1's leniency (see internal/jsoncompat.Read).
+func (s *State) UnmarshalJSON(b []byte) error {
+	return json.Unmarshal(b, s, jsoncompat.Read)
 }
 
 // StateFile is Dir/config.json: one registration per program segment (claude
@@ -91,10 +102,11 @@ func LoadStateFile(dir string) (StateFile, error) {
 	// The same object read twice: as the file, and as the top-level fields of
 	// the older layouts.
 	var legacy State
-	if err := json.Unmarshal(b, &f); err != nil {
+	// jsoncompat.Read: the file may have been written by a v1 build.
+	if err := json.Unmarshal(b, &f, jsoncompat.Read); err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &legacy); err != nil {
+	if err := json.Unmarshal(b, &legacy, jsoncompat.Read); err != nil {
 		return f, err
 	}
 	for p, s := range f.Registrations {
@@ -121,7 +133,7 @@ func SaveStateFile(dir string, f StateFile) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	b, err := json.MarshalIndent(f, "", "  ")
+	b, err := json.Marshal(f, jsoncompat.File) // the bytes a v1 build wrote
 	if err != nil {
 		return err
 	}

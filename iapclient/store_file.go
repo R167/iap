@@ -2,13 +2,15 @@ package iapclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
+
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // FileStore keeps credentials in Dir/credentials.json (a JSON object,
@@ -90,7 +92,7 @@ func (f FileStore) read() (map[string]string, error) {
 		return nil, err
 	}
 	m := map[string]string{}
-	if err := json.Unmarshal(b, &m); err != nil {
+	if err := json.Unmarshal(b, &m, jsoncompat.Read); err != nil { // possibly written by a v1 build
 		// The decoder's message could quote file content; give none of it.
 		return nil, fmt.Errorf("file store: %s is not a JSON object of credentials", f.path())
 	}
@@ -111,7 +113,7 @@ func (f FileStore) write(m map[string]string) error {
 	if err := checkPerm(f.path(), false); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	b, err := json.MarshalIndent(m, "", "  ")
+	b, err := json.Marshal(m, jsoncompat.File) // the bytes a v1 build wrote
 	if err != nil {
 		return err
 	}

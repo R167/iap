@@ -1,9 +1,11 @@
 package expose
 
 import (
-	"encoding/json"
+	"encoding/json/v2"
 	"fmt"
 	"regexp"
+
+	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // The wire protocol between `iap expose` and the tunnel service
@@ -97,8 +99,8 @@ type Control struct {
 	Type string `json:"type"`
 	// Ready.
 	URL            string `json:"url,omitempty"`
-	MaxAgeSeconds  int    `json:"max_age_seconds,omitempty"`
-	ReserveSeconds int    `json:"reserve_seconds,omitempty"`
+	MaxAgeSeconds  int    `json:"max_age_seconds,omitzero"`
+	ReserveSeconds int    `json:"reserve_seconds,omitzero"`
 	TookFrom       string `json:"took_from,omitempty"` // the registration --take moved the name from
 	// Closing.
 	Reason string `json:"reason,omitempty"`
@@ -109,8 +111,9 @@ type Control struct {
 	Holder  string `json:"holder,omitempty"`
 }
 
-// MarshalLine renders c as one JSON line.
+// MarshalLine renders c as one JSON line, byte for byte what encoding/json
+// (v1) wrote for it, so a peer on either JSON version reads it.
 func (c Control) MarshalLine() []byte {
-	b, _ := json.Marshal(c)
+	b, _ := json.Marshal(c, jsoncompat.Write)
 	return append(b, '\n')
 }

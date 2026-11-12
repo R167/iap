@@ -5,7 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
+	"encoding/json/v2"
 	"errors"
 	"fmt"
 	"net/http"
@@ -52,14 +52,14 @@ func (p *pkceIssuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	sum := sha256.Sum256([]byte(verifier))
 	if r.PostFormValue("grant_type") != "authorization_code" || !ok || base64.RawURLEncoding.EncodeToString(sum[:]) != challenge {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"})
+		_ = json.MarshalWrite(w, map[string]string{"error": "invalid_grant"})
 		return
 	}
 	principal := p.principal
 	if principal == "" {
 		principal = testAccount + ":*"
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	_ = json.MarshalWrite(w, map[string]any{
 		"refresh_token": testRefresh, "principal": principal, "expires_at": "2030-01-02T03:04:05Z",
 	})
 }

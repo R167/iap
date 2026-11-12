@@ -2,7 +2,8 @@ package iapclient
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"errors"
 	"os"
 	"strings"
@@ -47,7 +48,7 @@ func TestStateFileLayouts(t *testing.T) {
 		t.Errorf("after SaveState: %+v", f)
 	}
 	b, _ := os.ReadFile(StatePath(dir))
-	var top map[string]json.RawMessage
+	var top map[string]jsontext.Value
 	if err := json.Unmarshal(b, &top); err != nil {
 		t.Fatal(err)
 	}

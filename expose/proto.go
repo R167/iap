@@ -4,8 +4,6 @@ import (
 	"encoding/json/v2"
 	"fmt"
 	"regexp"
-
-	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // The wire protocol between `iap expose` and the tunnel service
@@ -111,9 +109,8 @@ type Control struct {
 	Holder  string `json:"holder,omitempty"`
 }
 
-// MarshalLine renders c as one JSON line, byte for byte what encoding/json
-// (v1) wrote for it, so a peer on either JSON version reads it.
+// MarshalLine renders c as one JSON line.
 func (c Control) MarshalLine() []byte {
-	b, _ := json.Marshal(c, jsoncompat.Write)
+	b, _ := json.Marshal(c)
 	return append(b, '\n')
 }

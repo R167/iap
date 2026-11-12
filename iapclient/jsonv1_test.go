@@ -4,6 +4,7 @@ import (
 	"context"
 	jsonv1 "encoding/json"
 	"encoding/json/v2"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -14,15 +15,16 @@ import (
 	"time"
 )
 
-// Files and responses below are literal encoding/json (v1) output, or input
-// v1 accepted. This package encodes with encoding/json/v2; these tests pin
-// that existing installs and v1 peers keep working. See CLAUDE.md, "JSON".
+// Files and responses below are literal encoding/json (v1) output. This
+// package uses encoding/json/v2 defaults; these tests pin that files written
+// by older releases and responses from a v1 issuer still decode, and that a
+// v1 reader can read what this package writes. See CLAUDE.md, "JSON".
 
 const claudeAcct = "agent:user:alice@example.com:box:claude"
 
 // v1StateFile is json.MarshalIndent(f, "", "  ") by a v1 build, for the
-// StateFile in v1StateFileValue. It has HTML characters and U+2028, which v1
-// escapes.
+// StateFile in v1StateFileValue, with v1's escapes for HTML characters and
+// U+2028.
 const v1StateFile = `{
   "registrations": {
     "claude": {
@@ -76,73 +78,53 @@ func equalState(a, b State) bool {
 		slices.Equal(a.AudienceSuffixes, b.AudienceSuffixes) && a.Store == b.Store && a.StoreFallback == b.StoreFallback
 }
 
-// config.json reads what v1 wrote, and is written back byte for byte as v1
-// wrote it (sorted keys, two-space indent, v1's escaping, false omitted).
-func TestStateFileV1Bytes(t *testing.T) {
+// config.json written by a v1 build loads, and what this package writes
+// loads back and is readable by a v1 decoder (an older iap sharing the
+// config dir).
+func TestStateFileFromV1(t *testing.T) {
 	want := v1StateFileValue()
-	got := loadState(t, v1StateFile)
-	if len(got.Registrations) != 2 || got.TailscaleClientID != want.TailscaleClientID {
-		t.Fatalf("loaded %+v", got)
-	}
-	for p, s := range want.Registrations {
-		if !equalState(got.Registrations[p], s) {
-			t.Errorf("%s = %+v, want %+v", p, got.Registrations[p], s)
+	check := func(what string, got StateFile) {
+		t.Helper()
+		if len(got.Registrations) != len(want.Registrations) || got.TailscaleClientID != want.TailscaleClientID {
+			t.Fatalf("%s: %+v", what, got)
+		}
+		for p, s := range want.Registrations {
+			if !equalState(got.Registrations[p], s) {
+				t.Errorf("%s: %s = %+v, want %+v", what, p, got.Registrations[p], s)
+			}
 		}
 	}
+	check("v1 file", loadState(t, v1StateFile))
 
 	dir := t.TempDir()
 	if err := SaveStateFile(dir, want); err != nil {
 		t.Fatal(err)
 	}
-	b, _ := os.ReadFile(StatePath(dir))
-	if string(b) != v1StateFile {
-		t.Errorf("written:\n%s\nv1 wrote:\n%s", b, v1StateFile)
-	}
-	// A v1 decoder reads it back (an older iap sharing the config dir).
-	var v1 StateFile
-	if err := jsonv1.Unmarshal(b, &v1); err != nil || !equalState(v1.Registrations["cli"], want.Registrations["cli"]) {
-		t.Errorf("v1 decode: %v %+v", err, v1)
-	}
-
-	// An empty file is still "{}", and a false StoreFallback still omitted.
-	if err := SaveStateFile(dir, StateFile{}); err != nil {
+	got, err := LoadStateFile(dir)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(StatePath(dir)); string(b) != "{}\n" {
-		t.Errorf("empty state written as %q", b)
+	check("round trip", got)
+	b, _ := os.ReadFile(StatePath(dir))
+	var v1 StateFile
+	if err := jsonv1.Unmarshal(b, &v1); err != nil {
+		t.Fatalf("v1 decode: %v", err)
 	}
+	check("v1 decode", v1)
+
+	// A false StoreFallback is omitted, as v1's omitempty did.
 	if b, err := json.Marshal(State{Account: "a"}); err != nil || string(b) != `{"account":"a","expires_at":"0001-01-01T00:00:00Z"}` {
 		t.Errorf("State{Account} = %s, %v", b, err)
 	}
-}
 
-// Input v1 accepted that v2's defaults would reject or misread: null for a
-// slice or map, names in another case, a repeated name (last wins), invalid
-// UTF-8 (U+FFFD), and unknown members.
-func TestStateFileV1Leniency(t *testing.T) {
+	// v1 wrote null for a nil slice or map without omitempty (the issuer's
+	// wire field, stored by another writer); unknown members are ignored.
 	f := loadState(t, `{"registrations":{"cli":{"account":"`+testAccount+`","expires_at":"2030-01-02T03:04:05Z","audience_suffixes":null,"unknown":1}},"tailscale_client_id":null}`)
 	if s := f.Registrations["cli"]; s.Account != testAccount || s.AudienceSuffixes != nil {
 		t.Errorf("null slice: %+v", s)
 	}
 	if f := loadState(t, `{"registrations":null}`); len(f.Registrations) != 0 {
 		t.Errorf("null map: %+v", f)
-	}
-
-	f = loadState(t, `{"Registrations":{"cli":{"SERVER":"https://access.example.com","Account":"`+testAccount+`","Expires_At":"2030-01-02T03:04:05Z","Audience_Suffixes":[".example.net"],"STORE":"file","Store_Fallback":true}},"Tailscale_Client_ID":"T1"}`)
-	want := State{Issuer: "https://access.example.com", Account: testAccount, ExpiresAt: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC),
-		AudienceSuffixes: []string{".example.net"}, Store: "file", StoreFallback: true}
-	if !equalState(f.Registrations["cli"], want) || f.TailscaleClientID != "T1" {
-		t.Errorf("mixed case: %+v", f)
-	}
-
-	f = loadState(t, `{"registrations":{"cli":{"account":"old","account":"`+testAccount+`"}},"tailscale_client_id":"a","tailscale_client_id":"b"}`)
-	if f.Registrations["cli"].Account != testAccount || f.TailscaleClientID != "b" {
-		t.Errorf("duplicate names: %+v", f)
-	}
-
-	f = loadState(t, "{\"registrations\":{\"cli\":{\"account\":\""+testAccount+"\",\"store\":\"fi\xffle\"}}}")
-	if got := f.Registrations["cli"].Store; got != "fi\uFFFDle" {
-		t.Errorf("invalid UTF-8: %q", got)
 	}
 }
 
@@ -181,11 +163,10 @@ func TestStateFileLegacyLayouts(t *testing.T) {
 	}
 }
 
-// State.UnmarshalJSON (the v1 method) still decodes for callers on v1, with
-// v1's leniency.
+// State.UnmarshalJSON (the v1 method) still decodes for callers on v1.
 func TestStateUnmarshalJSONV1Caller(t *testing.T) {
 	var s State
-	if err := jsonv1.Unmarshal([]byte(`{"Account":"a","account":"b","external_audience_suffixes":[".x.test"]}`), &s); err != nil {
+	if err := jsonv1.Unmarshal([]byte(`{"account":"b","external_audience_suffixes":[".x.test"]}`), &s); err != nil {
 		t.Fatal(err)
 	}
 	if s.Account != "b" || !slices.Equal(s.AudienceSuffixes, []string{".x.test"}) {
@@ -201,8 +182,9 @@ const v1CredentialsFile = `{
 }
 `
 
-// credentials.json reads what v1 wrote and is written back as v1 wrote it.
-func TestFileStoreV1Bytes(t *testing.T) {
+// credentials.json written by a v1 build loads, and what this package writes
+// is readable by a v1 decoder.
+func TestFileStoreFromV1(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		t.Fatal(err)
@@ -216,44 +198,24 @@ func TestFileStoreV1Bytes(t *testing.T) {
 	if s, err := fs.Load(ctx, "a"); err != nil || s.Reveal() != "iapr_<&>" {
 		t.Fatalf("Load a: %v", err)
 	}
-	// Rewrite with the same content: Save then restore "z".
-	if err := fs.Save(ctx, "z", NewSecret("iapr_z")); err != nil {
+	if err := fs.Save(ctx, "b", NewSecret("iapr_b")); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ := os.ReadFile(path); string(b) != v1CredentialsFile {
-		t.Errorf("written:\n%s\nv1 wrote:\n%s", b, v1CredentialsFile)
-	}
-	if err := fs.Delete(ctx, "a"); err != nil {
-		t.Fatal(err)
-	}
-	if err := fs.Delete(ctx, "m"); err != nil {
-		t.Fatal(err)
-	}
-	if err := fs.Delete(ctx, "z"); err != nil {
-		t.Fatal(err)
-	}
-	if b, _ := os.ReadFile(path); string(b) != "{}\n" {
-		t.Errorf("emptied file = %q", b)
+	b, _ := os.ReadFile(path)
+	var v1 map[string]string
+	if err := jsonv1.Unmarshal(b, &v1); err != nil || !maps.Equal(v1, map[string]string{"a": "iapr_<&>", "b": "iapr_b", "m": "", "z": "iapr_z"}) {
+		t.Errorf("v1 decode: %v %v", v1, err)
 	}
 
-	// Leniency: a repeated name (last wins), invalid UTF-8, and a null file
-	// (v1 left the map empty).
-	for content, want := range map[string]string{
-		`{"a":"iapr_old","a":"iapr_new"}`: "iapr_new",
-		"{\"a\":\"iapr_\xff\"}":           "iapr_\uFFFD",
-	} {
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if s, err := fs.Load(ctx, "a"); err != nil || s.Reveal() != want {
-			t.Errorf("%q: %v", content, err)
-		}
-	}
+	// A null file (v1's encoding of a nil map) holds nothing.
 	if err := os.WriteFile(path, []byte("null"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	if ok, err := fs.Exists(ctx, "a"); err != nil || ok {
 		t.Errorf("null file: %v %v", ok, err)
+	}
+	if err := fs.Save(ctx, "a", NewSecret("iapr_a")); err != nil {
+		t.Errorf("save over a null file: %v", err)
 	}
 }
 
@@ -296,8 +258,7 @@ func TestTokenResponseFromV1Issuer(t *testing.T) {
 }
 
 // Secret refuses every JSON route, in v2 and v1, directly, by pointer, in a
-// struct, a slice, as a map value and as a map key, and with the
-// compatibility options in force.
+// struct, a slice, as a map value and as a map key, and with options.
 func TestSecretRefusesJSONV2(t *testing.T) {
 	s := NewSecret("tok-SECRET")
 	tok := Token{Value: s, Host: "h"}

@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
-
-	"github.com/R167/iap/internal/jsoncompat"
 )
 
 // State is the non-secret record of one program's registration, kept in
@@ -49,10 +47,9 @@ func (s *State) UnmarshalJSONFrom(dec *jsontext.Decoder) error {
 	return nil
 }
 
-// UnmarshalJSON is UnmarshalJSONFrom for callers on encoding/json (v1),
-// with v1's leniency (see internal/jsoncompat.Read).
+// UnmarshalJSON is UnmarshalJSONFrom for callers on encoding/json (v1).
 func (s *State) UnmarshalJSON(b []byte) error {
-	return json.Unmarshal(b, s, jsoncompat.Read)
+	return json.Unmarshal(b, s)
 }
 
 // StateFile is Dir/config.json: one registration per program segment (claude
@@ -102,11 +99,10 @@ func LoadStateFile(dir string) (StateFile, error) {
 	// The same object read twice: as the file, and as the top-level fields of
 	// the older layouts.
 	var legacy State
-	// jsoncompat.Read: the file may have been written by a v1 build.
-	if err := json.Unmarshal(b, &f, jsoncompat.Read); err != nil {
+	if err := json.Unmarshal(b, &f); err != nil {
 		return f, err
 	}
-	if err := json.Unmarshal(b, &legacy, jsoncompat.Read); err != nil {
+	if err := json.Unmarshal(b, &legacy); err != nil {
 		return f, err
 	}
 	for p, s := range f.Registrations {
@@ -133,7 +129,7 @@ func SaveStateFile(dir string, f StateFile) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	b, err := json.Marshal(f, jsoncompat.File) // the bytes a v1 build wrote
+	b, err := json.Marshal(f, jsontext.WithIndent("  "))
 	if err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ It comes in three parts:
 - **`iap`**, a command-line tool: `iap login`, `iap curl`, `iap expose`, `iap status`, `iap logout`.
 - **`iapclient`** (`github.com/R167/iap/iapclient`), a Go package with the same logic, for programs that want an `*http.Client` that authenticates on its own. It depends only on the standard library.
 - **`expose`** (`github.com/R167/iap/expose`), the tunnel client behind `iap expose`, and the wire protocol the tunnel service speaks.
+- **`identity`** (`github.com/R167/iap/identity`), for the services behind the proxy: it verifies the signed `X-IAP-Identity` header the proxy adds to every request it allows. It depends only on the standard library.
 
 macOS and Linux are supported; Windows is not.
 
@@ -195,6 +196,26 @@ resp, err := hc.Get("https://app.example.com/api/status")    // *iapclient.Forbi
 - `Client.TokenSource(session).Token(ctx, host)` returns a `Token`. Its `Value` is a `Secret`, which prints as `<redacted>` with every `fmt` verb and in `slog`, and refuses JSON marshalling. `Secret.Reveal()` is the only way to the raw value.
 - `Transport` is an `http.RoundTripper`. It adds the header only to `https` requests whose host is allowed, mints a token for exactly that host, removes any `Proxy-Authorization` the caller set, and adds nothing when a redirect leads to a different host. Requests to other hosts pass through without the header.
 - Errors: `ErrNotLoggedIn`, `ErrInvalidGrant` (registration revoked or expired), `*ForbiddenError` (no grant; names the principal and host), `*HostNotAllowedError`, `*IssuerMismatchError` (the saved registration belongs to another issuer, so its credential is not sent), `ErrNoKeyring`, `ErrSecretServiceUnavailable`.
+
+## Verifying the caller in a service behind the proxy
+
+The proxy adds `X-IAP-Identity` to every request it allows: an EdDSA JWT whose `sub` is the caller (`user:<email>`, `sa:<namespace>/<name>`, `agent:user:<email>:<machine>:<program>:<session>` or `agent:k8s:<cluster>:<workload>`), with `aud` set to `https://<host>` and a five-minute lifetime. A service that wants to know who is calling verifies it:
+
+```go
+import "github.com/R167/iap/identity"
+
+keys := &identity.RemoteJWKS{URL: "https://access.example.com/.well-known/jwks.json"}
+v := identity.NewVerifier(keys, "https://access.example.com", "app.example.com")
+
+id, err := v.Verify(r.Context(), r.Header.Get(identity.Header))
+// id.Principal, id.Kind, id.AgentType, id.Email (users), id.Owner (agent:user)
+```
+
+- `Verify` refuses anything short of a valid token for this host: another key or algorithm, another issuer or audience, an expired token (30 seconds of clock skew allowed), and a `sub` that is not a canonical, concrete principal of a known type. `agent:test`, `group:`, `gh:` and unknown agent types are always refused, as are an `email` or `owner` claim that disagrees with `sub`.
+- Which of the remaining principals a service accepts is up to the service: check `id.Kind` and `id.AgentType`.
+- `RemoteJWKS` fetches the issuer's keys on first use and refreshes them every `TTL` (default an hour) in the background. A token signed with a key it does not hold triggers a fetch at once, which is how a key rotation reaches the service, but fetches start at most once per `MinInterval` (default 30 seconds), so made-up key IDs cannot flood the issuer. A failed refresh keeps the last good keys; until the first fetch succeeds, `Verify` returns an error wrapping `ErrNoKeys`. Each fetch is bounded by `FetchTimeout` (default 10 seconds) and a 1 MiB body. `OnFetch` reports every fetch's result for logging or metrics, and `Refresh` loads the keys ahead of the first request. An `http://` URL is accepted for an issuer reached inside a private network.
+- `StaticJWKS` takes a fixed JWKS document instead: for a service that must not depend on reaching the issuer, and for tests.
+- The audience check is what stops a service, which receives its visitors' genuine tokens, from replaying one to another host. Strip `X-IAP-Identity` from any listener the proxy is not in front of, or a replayed token authenticates there until it expires.
 
 ## Instructions for an AI coding agent
 

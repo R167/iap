@@ -1,6 +1,6 @@
 # iap
 
-Client side of an iap-authz identity-aware proxy: a CLI and two Go packages that get a local program or AI agent short-lived, host-bound tokens as `agent:user:<email>:<machine>:<program>:<session>`. `README.md` is the user guide; this file is for working on the code. The issuer (iap-authz) and the tunnel server (iap-tunnel) live in a private repository; nothing server-side belongs here.
+Client side of an iap-authz identity-aware proxy: a CLI and two Go packages that get a local program or AI agent short-lived, host-bound tokens as `agent:user:<email>:<machine>:<program>:<session>`. `README.md` is the user guide; this file is for working on the code. The issuer (iap-authz) and the tunnel server (iap-tunnel) live in a private repository; the only server-side code here is `identity/`, which services behind the proxy import to verify its header.
 
 ## Layout
 
@@ -8,6 +8,7 @@ Client side of an iap-authz identity-aware proxy: a CLI and two Go packages that
 |---|---|---|
 | `iapclient/` | The library: issuer config, credential stores (Keychain via `security`, Secret Service via `secret-tool`, file), loopback and headless login, token cache, `Transport`, refresh rotation under a file lock | **Standard library only.** No third-party import, ever; consumers rely on it. Exported API is public: additive changes only. |
 | `expose/` | Tunnel client (`Run`) and the wire protocol (`proto.go`) | Imported by the private iap-tunnel server; see "Wire protocol". Depends on `github.com/coder/websocket` and `github.com/hashicorp/yamux`. |
+| `identity/` | Verifies the `X-IAP-Identity` header the issuer signs: `Verifier`, key sources `RemoteJWKS` (the issuer's JWKS URL) and `StaticJWKS` (a fixed document, also the test seam), `ParsePrincipal` | **Standard library only**, like `iapclient`. Exported API is public: additive changes only. The principal grammar matches the issuer's; which principals a service accepts stays in the service. |
 | `internal/cli/` | The `iap` command (cobra): `main.go` (root, login, curl, status, logout), `curlargs.go` (curl option allowlist), `expose.go` | `Main() int` is the whole program; it returns the exit status. |
 | `cmd/iap/main.go`, `main.go` | Identical `package main` shims: `os.Exit(cli.Main())` | Both exist so `go install github.com/R167/iap@latest` and `.../cmd/iap@latest` each produce `iap`. Keep them identical and logic-free. |
 

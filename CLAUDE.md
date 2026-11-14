@@ -64,9 +64,10 @@ go run -ldflags "-X github.com/R167/iap/internal/cli.Version=v0.0.0-test" ./cmd/
 
 ## Release
 
-1. Merge to `master` with CI green.
-2. Tag and push: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0` (semver; a protocol or exported-API break needs a new major version and a `/vN` module path).
-3. `.github/workflows/release.yml` vets, tests, builds `iap_{linux,darwin}_{amd64,arm64}` with `CGO_ENABLED=0 -trimpath -ldflags "-s -w -X .../internal/cli.Version=<tag>"`, writes `SHA256SUMS`, attests build provenance for each binary, and creates the GitHub release with `gh`.
+1. Merge to `master` with CI green. Every user-visible change adds a line under `## [Unreleased]` in `CHANGELOG.md` ([Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/): Added, Changed, Deprecated, Removed, Fixed, Security) in the same commit.
+2. Rename `[Unreleased]` to the version and date, add a fresh empty `[Unreleased]` above it, update the compare links at the bottom, and commit.
+3. Tag and push: `git tag -a v0.2.0 -m v0.2.0 && git push origin v0.2.0` (semver; a protocol or exported-API break needs a new major version and a `/vN` module path).
+4. `.github/workflows/release.yml` vets, tests, builds `iap_{linux,darwin}_{amd64,arm64}` with `CGO_ENABLED=0 -trimpath -ldflags "-s -w -X .../internal/cli.Version=<tag>"`, writes `SHA256SUMS`, attests build provenance for each binary, and creates the GitHub release with `gh`.
 
 Third-party actions are pinned to full commit SHAs with a `# vX.Y.Z` comment. To bump one, resolve the tag (`gh api repos/<owner>/<repo>/git/ref/tags/<tag>`; if `object.type` is `tag`, follow it to the commit) and update both.
 

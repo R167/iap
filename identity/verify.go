@@ -124,12 +124,17 @@ func (v *Verifier) verify(ctx context.Context, raw string) (Identity, error) {
 	if v.Now != nil {
 		now = v.Now()
 	}
+	exp, ok1 := numericDate(c.Exp)
+	iat, ok2 := numericDate(c.Iat)
+	nbf, ok3 := numericDate(c.Nbf)
 	switch {
-	case now.Add(-Leeway).After(numericDate(*c.Exp)):
+	case !ok1 || !ok2 || !ok3:
+		return Identity{}, errors.New("exp, iat or nbf out of range")
+	case now.Add(-Leeway).After(exp):
 		return Identity{}, errors.New("expired")
-	case now.Add(Leeway).Before(numericDate(*c.Iat)):
+	case now.Add(Leeway).Before(iat):
 		return Identity{}, errors.New("issued in the future")
-	case c.Nbf != nil && now.Add(Leeway).Before(numericDate(*c.Nbf)):
+	case c.Nbf != nil && now.Add(Leeway).Before(nbf):
 		return Identity{}, errors.New("not valid yet")
 	}
 
@@ -160,10 +165,20 @@ func audienceHas(aud jsontext.Value, want string) bool {
 	return json.Unmarshal(aud, &many) == nil && slices.Contains(many, want)
 }
 
-func numericDate(f float64) time.Time {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return time.Time{}
+// maxNumericDate is far beyond any real token (about the year 5138) and far
+// below where a float64 to int64 conversion stops being exact on every
+// platform.
+const maxNumericDate = 1e11
+
+// numericDate converts a JWT NumericDate, refusing a negative, non-finite or
+// absurdly large one. A nil date converts to the zero time.
+func numericDate(f *float64) (time.Time, bool) {
+	if f == nil {
+		return time.Time{}, true
 	}
-	sec, frac := math.Modf(f)
-	return time.Unix(int64(sec), int64(frac*1e9))
+	if math.IsNaN(*f) || *f < 0 || *f > maxNumericDate {
+		return time.Time{}, false
+	}
+	sec, frac := math.Modf(*f)
+	return time.Unix(int64(sec), int64(frac*1e9)), true
 }

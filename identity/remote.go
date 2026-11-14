@@ -26,7 +26,7 @@ const (
 const maxJWKSSize = 1 << 20
 
 // RemoteJWKS is a key source that fetches the issuer's JWKS document from
-// URL, typically https://<issuer>/.well-known/jwks.json.
+// URL, the JWKS URL the proxy publishes.
 //
 // It fetches on first use and keeps the set for TTL, then refreshes it in
 // the background while still answering from it. A token naming a kid the set
